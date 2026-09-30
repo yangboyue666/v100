@@ -3,13 +3,14 @@ import com.android.build.api.dsl.LibraryExtension
 
 allprojects {
     repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+        // 国内加速镜像（官方源不可达时兜底）
         maven { url = uri("https://maven.aliyun.com/repository/google") }
         maven { url = uri("https://maven.aliyun.com/repository/public") }
         maven { url = uri("https://maven.aliyun.com/repository/central") }
         maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
-        google()
-        mavenCentral()
-        gradlePluginPortal()
     }
 }
 

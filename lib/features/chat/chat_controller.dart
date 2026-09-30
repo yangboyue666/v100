@@ -7,6 +7,7 @@ import '../../core/llm/llm_service.dart';
 import '../../core/llm/pattern_llm_service.dart';
 import '../../core/llm/nobodywho_llm_service.dart';
 import '../../core/llm/model_manager.dart';
+import '../../core/utils/app_log.dart';
 import '../../core/providers.dart';
 import '../schedule/schedule_controller.dart' as sch_ctrl;
 import '../schedule/schedule_repository.dart';
@@ -61,15 +62,22 @@ class UIMessage {
 /// 当前活跃会话 ID
 final currentSessionIdProvider = StateProvider<String?>((ref) => null);
 
-/// 当前会话消息列表（UI 状态）
+/// 嵌入式聊天（首页底部，普通模式 — 任务式，添加日程/作业/课程）
 final chatMessagesProvider =
     StateNotifierProvider<ChatMessagesNotifier, List<UIMessage>>((ref) {
-  return ChatMessagesNotifier(ref);
+  return ChatMessagesNotifier(ref, mode: ChatMode.normal);
+});
+
+/// 全屏 AI 聊天（AI 助手卡片，千问模型 — 自由聊天 + 工具调用）
+final aiChatMessagesProvider =
+    StateNotifierProvider<ChatMessagesNotifier, List<UIMessage>>((ref) {
+  return ChatMessagesNotifier(ref, mode: ChatMode.downloadedModel);
 });
 
 class ChatMessagesNotifier extends StateNotifier<List<UIMessage>> {
-  ChatMessagesNotifier(this._ref) : super([]);
+  ChatMessagesNotifier(Ref ref, {required this.mode}) : _ref = ref, super([]);
   final Ref _ref;
+  final ChatMode mode;
   final _uuid = const Uuid();
 
   String? _sessionId;
@@ -157,32 +165,38 @@ class ChatMessagesNotifier extends StateNotifier<List<UIMessage>> {
       ...history,
     ];
 
-    // 判断使用真实模型还是模式匹配后备
-    final useRealModel = await ModelManager.instance.isModelDownloaded();
-    final LlmService llm;
-    if (useRealModel) {
-      llm = NobodyWhoLlmService();
-    } else {
-      llm = PatternBasedLlmService();
-    }
+    // 4) 按模式选择后端（嵌入式=普通模型，全屏=千问模型）
     final allTools = AiTools.all();
+    String fullText;
+    bool usedRealModel = false;
 
-    // 4) 流式接收
-    final buf = StringBuffer();
-    await for (final chunk in llm.stream(llmMessages, tools: allTools)) {
-      buf.write(chunk);
-      state = [
-        for (final m in state)
-          if (m.id == assistantId)
-            m.copyWith(content: buf.toString(), isStreaming: true)
-          else
-            m,
-      ];
+    if (mode == ChatMode.downloadedModel) {
+      try {
+        fullText = await _streamAssistant(
+          NobodyWhoLlmService(),
+          llmMessages,
+          allTools,
+          assistantId,
+        );
+        usedRealModel = true;
+      } catch (e, st) {
+        AppLog.instance.error('千问模型调用失败', e, st);
+        ModelManager.instance.markError('千问模型调用失败，详情见对话');
+        // 不降级到普通模型：保留占位消息，并在对话里插入一条可展开的错误详情
+        _injectAiError(assistantId, startedAt, e);
+        return;
+      }
+    } else {
+      fullText = await _streamAssistant(
+        PatternBasedLlmService(),
+        llmMessages,
+        allTools,
+        assistantId,
+      );
     }
-    final fullText = buf.toString();
 
-    // 真实模型（nobodywho）内部已处理工具调用，直接显示文本
-    if (useRealModel) {
+    // 5) 真实模型（nobodywho）内部已处理工具调用，直接显示文本
+    if (usedRealModel) {
       final assistantMsg = StoredChatMessage(
         id: assistantId,
         sessionId: sid,
@@ -263,6 +277,74 @@ class ChatMessagesNotifier extends StateNotifier<List<UIMessage>> {
           createdAt: DateTime.now(),
         ),
     ];
+  }
+
+  /// 千问模型调用失败：不降级，把占位消息标记失败并在对话里插入可查看的错误详情
+  void _injectAiError(String assistantId, DateTime startedAt, Object error) {
+    final raw = error.toString();
+    final friendly = _friendlyAiError(raw);
+    state = [
+      for (final m in state)
+        if (m.id == assistantId)
+          m.copyWith(content: '⚠️ 千问模型调用失败', isStreaming: false)
+        else
+          m,
+      UIMessage(
+        id: _uuid.v4(),
+        role: 'tool',
+        content: '$friendly\n\n【错误详情】\n$raw',
+        createdAt: DateTime.now(),
+      ),
+    ];
+  }
+
+  /// 把底层英文异常转成用户能看懂的中文说明
+  String _friendlyAiError(String raw) {
+    if (raw.contains("doesn't support tool calling") ||
+        raw.contains('NoToolTemplate') ||
+        raw.contains('Unsupported tool calling format')) {
+      return '当前模型不支持工具调用（日程/作业/课程）。\n请切换到顶部的 Qwen3 系列模型，或在「模型管理」中下载 Qwen3。';
+    }
+    if (raw.contains('tool calling format')) {
+      return '无法识别该模型的工具调用格式。\n请改用 Qwen3 系列模型以获得完整功能。';
+    }
+    if (raw.contains('StringToToken') || raw.contains('tokenize')) {
+      return '模型无法识别工具调用的标记符号（token）。\n这可能是因为 GGUF 文件不完整或模型不兼容，请重新下载 Qwen3 官方模型。';
+    }
+    if (raw.contains('memory') ||
+        raw.contains('Memory') ||
+        raw.contains('bad_alloc') ||
+        raw.contains('OutOfMemory')) {
+      return '运行内存不足。\n请换用更小的模型（如 Qwen3 0.6B），或关闭其他应用后重试。';
+    }
+    if (raw.contains('chat template') || raw.contains('ChatTemplate')) {
+      return '该 GGUF 文件缺少对话模板，请改用官方 Qwen3-GGUF 模型。';
+    }
+    if (raw.contains('Model not found')) {
+      return '模型文件未找到，请重新下载。';
+    }
+    return '千问模型调用失败，请展开下方详情或查看右上角日志。';
+  }
+
+  /// 将某个 LLM 的流式输出实时写入指定的 assistant 占位消息，返回完整文本
+  Future<String> _streamAssistant(
+    LlmService llm,
+    List<LlmMessage> llmMessages,
+    List<LlmTool> tools,
+    String assistantId,
+  ) async {
+    final buf = StringBuffer();
+    await for (final chunk in llm.stream(llmMessages, tools: tools)) {
+      buf.write(chunk);
+      state = [
+        for (final m in state)
+          if (m.id == assistantId)
+            m.copyWith(content: buf.toString(), isStreaming: true)
+          else
+            m,
+      ];
+    }
+    return buf.toString();
   }
 
   Future<String> _executeTool(LlmToolCall tc) async {
