@@ -1,0 +1,93 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.0'
+          channel: stable
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Ensure nobodywho 4.0.0
+        run: |
+          flutter pub deps --no-dev | grep nobodywho || true
+          flutter pub upgrade nobodywho || true
+          flutter pub deps --no-dev | grep nobodywho || true
+
+      - name: Prepare debug keystore
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkey -v -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Ensure Rust Android target
+        run: |
+          if command -v rustup >/dev/null 2>&1; then
+            rustup target add aarch64-linux-android || true
+            rustup show || true
+          fi
+
+      - name: Build release APK (arm64)
+        run: |
+          flutter build apk --release --target-platform android-arm64 || echo "flutter did not report apk path; searching..."
+          echo "=== locate apk files ==="
+          find "$GITHUB_WORKSPACE" -name "*.apk" -type f -printf "%s\t%p\n" || true
+          mkdir -p artifact
+          find "$GITHUB_WORKSPACE" -name "*.apk" -type f -exec cp {} artifact/ \;
+          ls -lh artifact || true
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: student-assistant-apk
+          path: artifact/*.apk
+          if-no-files-found: warn
+
+      - name: Publish Release
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.8.0
+          name: 学生智能助手 v1.8.0（千问环境修复 + 错误日志 + 不降级）
+          body: |
+            ## 本次更新
+            - 修复千问模型工具调用：Qwen3 关闭思考模式，避免干扰工具调用语法
+            - 按模型能力区分：只有支持工具调用的模型（Qwen3 系列）才注册工具，其余模型纯聊天
+            - 模型加载失败不再降级到普通模型：对话中显示可展开的错误详情（点按查看/复制）
+            - 新增运行日志：右上角日志按钮可查看/复制/清空，日志自动保留 24 小时
+            - 工具系统提示词独立：不再让千问输出 <<TOOLCALL>> 文本标记，改为原生工具调用
+            - 完整错误中文解读：区别"模型不支持工具 / GGUF缺模板 / 内存不足 / 文件缺失"
+          files: artifact/*.apk
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

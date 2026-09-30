@@ -4,11 +4,14 @@ import 'package:flutter_animate/flutter_animate.dart';
 
 import '../../core/theme/colors.dart';
 import '../../router/app_router.dart';
+import '../../shared/widgets/glass_app_bar.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/section_indicator.dart';
 import '../../shared/widgets/shimmer_text.dart';
 import '../../shared/widgets/animated_indicators.dart';
 import '../chat/chat_screen.dart';
+import '../chat/fullscreen_ai_screen.dart';
+import '../model/ai_model_screen.dart';
 
 class HubScreen extends ConsumerStatefulWidget {
   const HubScreen({super.key});
@@ -78,6 +81,16 @@ class _HubScreenState extends ConsumerState<HubScreen>
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
+                            const SizedBox(width: 8),
+                            GlassIconButton(
+                              icon: const Icon(Icons.memory_rounded),
+                              size: 34,
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => const AiModelScreen(),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -113,88 +126,121 @@ class _HubScreenState extends ConsumerState<HubScreen>
     return isWide ? _wideLayout() : _narrowLayout();
   }
 
-  /// 窄屏：上下两层。上面是 2x2 网格（4 入口），下面是 AI 对话框（可折叠）
+  /// 窄屏：3x2 网格（6 入口）+ 底部浮动 AI 圆球（可展开）
   Widget _narrowLayout() {
     return Column(
       children: [
-        // 2x2 网格
+        // 3x2 网格
         Expanded(
-          flex: _chatExpanded ? 5 : 11,
           child: LayoutBuilder(
             builder: (ctx, c) {
               const gap = 12.0;
-              final size = ((c.maxWidth - gap) / 2).clamp(120.0, 220.0);
-              return Column(
-                children: [
-                  Row(
-                    children: [
-                      _EntryCard(
-                        size: size,
-                        entry: HubEntry.schedule,
-                      ).animate().fadeIn(delay: 100.ms, duration: 500.ms).slideY(
-                          begin: 0.1, duration: 500.ms, curve: Curves.easeOutCubic),
-                      const SizedBox(width: gap),
-                      _EntryCard(size: size, entry: HubEntry.assignment)
-                          .animate()
-                          .fadeIn(delay: 200.ms, duration: 500.ms)
-                          .slideY(
-                              begin: 0.1,
-                              duration: 500.ms,
-                              curve: Curves.easeOutCubic),
-                    ],
-                  ),
-                  const SizedBox(height: gap),
-                  Row(
-                    children: [
-                      _EntryCard(size: size, entry: HubEntry.course)
-                          .animate()
-                          .fadeIn(delay: 300.ms, duration: 500.ms)
-                          .slideY(
-                              begin: 0.1,
-                              duration: 500.ms,
-                              curve: Curves.easeOutCubic),
-                      const SizedBox(width: gap),
-                      _EntryCard(size: size, entry: HubEntry.mood)
-                          .animate()
-                          .fadeIn(delay: 400.ms, duration: 500.ms)
-                          .slideY(
-                              begin: 0.1,
-                              duration: 500.ms,
-                              curve: Curves.easeOutCubic),
-                    ],
-                  ),
-                ],
+              final sizeW = ((c.maxWidth - gap) / 2).clamp(100.0, 200.0);
+              final sizeH = ((c.maxHeight - 2 * gap) / 3).clamp(80.0, 200.0);
+              final size = sizeW < sizeH ? sizeW : sizeH;
+              return Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _EntryCard(size: size, entry: HubEntry.schedule),
+                        const SizedBox(width: gap),
+                        _EntryCard(size: size, entry: HubEntry.assignment),
+                      ],
+                    ),
+                    const SizedBox(height: gap),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _EntryCard(size: size, entry: HubEntry.course),
+                        const SizedBox(width: gap),
+                        _EntryCard(size: size, entry: HubEntry.mood),
+                      ],
+                    ),
+                    const SizedBox(height: gap),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _AiEntryCard(size: size),
+                        const SizedBox(width: gap),
+                        _ModelManageCard(size: size),
+                      ],
+                    ),
+                  ],
+                ),
               );
             },
           ),
         ),
-        const SizedBox(height: 12),
-        // 中央 AI 对话框（可折叠）
-        AnimatedSize(
-          duration: const Duration(milliseconds: 350),
-          curve: Curves.easeOutCubic,
-          child: _chatExpanded
-              ? SizedBox(
-                  height: 280,
-                  child: GlassCard(
-                    padding: EdgeInsets.zero,
-                    borderRadius: 28,
-                    backgroundOpacity: 0.10,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(28),
-                      child: Column(
-                        children: [
-                          _buildChatHeader(),
-                          const Expanded(child: ChatScreen(embedded: true)),
-                        ],
-                      ),
+        // 底部浮动 AI 圆球 / 展开对话框
+        _buildBottomChat(),
+      ],
+    );
+  }
+
+  /// 底部浮动 AI：收起=圆球，展开=嵌入式对话框
+  Widget _buildBottomChat() {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.bottomRight,
+      child: _chatExpanded
+          ? Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: SizedBox(
+                height: 280,
+                child: GlassCard(
+                  padding: EdgeInsets.zero,
+                  borderRadius: 28,
+                  backgroundOpacity: 0.10,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(28),
+                    child: Column(
+                      children: [
+                        _buildChatHeader(),
+                        const Expanded(child: ChatScreen(embedded: true)),
+                      ],
                     ),
                   ),
-                )
-              : _buildCollapsedChatBar(),
+                ),
+              ),
+            )
+          : Padding(
+              padding: const EdgeInsets.fromLTRB(0, 8, 16, 16),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: _buildFloatingBall(),
+              ),
+            ),
+    );
+  }
+
+  /// 浮动 AI 圆球
+  Widget _buildFloatingBall() {
+    return GestureDetector(
+      onTap: _toggleChat,
+      child: Container(
+        width: 60,
+        height: 60,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: const LinearGradient(
+            colors: [AppColors.accent1, AppColors.accent2],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.accent2.withOpacity(0.4),
+              blurRadius: 16,
+              spreadRadius: 2,
+            ),
+          ],
         ),
-        const SizedBox(height: 8),
-      ],
+        child: const Icon(Icons.chat_rounded, color: Colors.white, size: 28),
+      ),
     );
   }
 
@@ -241,57 +287,30 @@ class _HubScreenState extends ConsumerState<HubScreen>
     );
   }
 
-  /// 折叠状态的 AI 对话栏
-  Widget _buildCollapsedChatBar() {
-    return GlassCard(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      borderRadius: 24,
-      backgroundOpacity: 0.10,
-      onTap: _toggleChat,
-      child: Row(
-        children: [
-          const PulsingDot(size: 10, color: AppColors.accent1),
-          const SizedBox(width: 10),
-          const Text(
-            '点击展开 AI 助手',
-            style: TextStyle(
-              color: AppColors.textSecondary,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.08),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.expand_less_rounded,
-              color: AppColors.textSecondary,
-              size: 20,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 宽屏：左右布局。左 4 入口竖排，右 AI 对话框
+  /// 宽屏：左右布局。左 6 入口竖排，右 AI 对话框
   Widget _wideLayout() {
     return Row(
       children: [
         Expanded(
           flex: 4,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: HubEntry.values
-                .map((e) => Padding(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ...HubEntry.values.map((e) => Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: _EntryCard(size: double.infinity, entry: e, horizontal: true),
-                    ))
-                .toList(),
+                    )),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _AiEntryCard(size: double.infinity, horizontal: true),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _ModelManageCard(size: double.infinity, horizontal: true),
+                ),
+              ],
+            ),
           ),
         ),
         const SizedBox(width: 12),
@@ -536,5 +555,201 @@ class _EntryCard extends StatelessWidget {
       case HubEntry.mood:
         return '记录心情 · 心情日历';
     }
+  }
+}
+
+/// AI 助手卡片 → 全屏千问对话
+class _AiEntryCard extends StatelessWidget {
+  const _AiEntryCard({required this.size, this.horizontal = false});
+  final double size;
+  final bool horizontal;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = [AppColors.accent1, AppColors.accent2];
+    if (size == double.infinity || horizontal) {
+      return GlassCard(
+        padding: const EdgeInsets.all(16),
+        borderRadius: 24,
+        backgroundOpacity: 0.14,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const FullScreenAiScreen()),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: colors),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('AI 助手', style: TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  const Text('千问大模型 · 自由对话', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
+          ],
+        ),
+      );
+    }
+    return SizedBox(
+      width: size,
+      height: size,
+      child: GlassCard(
+        padding: const EdgeInsets.all(14),
+        borderRadius: 24,
+        backgroundOpacity: 0.14,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const FullScreenAiScreen()),
+        ),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [colors.first.withOpacity(0.25), colors.last.withOpacity(0.05)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: colors),
+                      shape: BoxShape.circle,
+                      boxShadow: [BoxShadow(color: colors.first.withOpacity(0.4), blurRadius: 10, spreadRadius: 1)],
+                    ),
+                    child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 20),
+                  ),
+                  const Spacer(),
+                  const Text('AI 助手', style: TextStyle(color: AppColors.textPrimary, fontSize: 17, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  const Text('千问大模型\n自由对话', maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: AppColors.textMuted, fontSize: 11, height: 1.3)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 模型管理卡片 → 下载/管理端侧模型
+class _ModelManageCard extends StatelessWidget {
+  const _ModelManageCard({required this.size, this.horizontal = false});
+  final double size;
+  final bool horizontal;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = [AppColors.accent4, AppColors.accent1];
+    if (size == double.infinity || horizontal) {
+      return GlassCard(
+        padding: const EdgeInsets.all(16),
+        borderRadius: 24,
+        backgroundOpacity: 0.12,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const AiModelScreen()),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: colors),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.memory_rounded, color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('模型管理', style: TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  const Text('下载/切换端侧模型', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
+          ],
+        ),
+      );
+    }
+    return SizedBox(
+      width: size,
+      height: size,
+      child: GlassCard(
+        padding: const EdgeInsets.all(14),
+        borderRadius: 24,
+        backgroundOpacity: 0.12,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const AiModelScreen()),
+        ),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [colors.first.withOpacity(0.20), colors.last.withOpacity(0.05)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: colors),
+                      shape: BoxShape.circle,
+                      boxShadow: [BoxShadow(color: colors.first.withOpacity(0.4), blurRadius: 10, spreadRadius: 1)],
+                    ),
+                    child: const Icon(Icons.memory_rounded, color: Colors.white, size: 20),
+                  ),
+                  const Spacer(),
+                  const Text('模型管理', style: TextStyle(color: AppColors.textPrimary, fontSize: 17, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  const Text('下载/切换\n端侧模型', maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: AppColors.textMuted, fontSize: 11, height: 1.3)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
